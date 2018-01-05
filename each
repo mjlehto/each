@@ -1,0 +1,174 @@
+#!/bin/bash
+
+# Global color defs for output coloring
+readonly c_yellow='\033[1;33m'
+readonly c_red='\033[0;31m'
+readonly c_green='\033[0;32m'
+readonly c_nocolor='\033[0m'
+
+# Prints help obviously
+# Globals:
+#   $0 for script filename
+function print_help {
+    local -r bin="$(basename "${0}")"
+    echo "${bin} eases the status check of workspace gits"
+    echo "Usage: ${bin} <OPT> <COMMAND> <PARAMS>"
+    echo " OPT"
+    echo " -h | --help  - Prints this help"
+    echo " COMMAND"
+    echo "  checkout    - git checkout"
+    echo "  fetch       - git fetch -p"
+    echo "  purr        - git pull -r "
+    echo "  status      - Prints long status for gits"
+    echo " PARAMS"
+    echo "  Depend on the command. For example for fetch, the params"
+    echo "  are passed directly for the git fetch."
+    echo " EXAMPLES"
+    echo "  ${bin} -r fetch -p  # Fetch all gits in local dir"
+    echo "  ${bin} -a fetch -p  # Fetch all gits in workspace"
+}
+
+# Echoes given string with given color
+# Arguments:
+#   $1 string to echo
+#   $2 color value to use (see previous definitions)
+function print_color {
+    if [ "$1" != "" ]
+    then
+        echo -e "${2}$1${c_nocolor}"
+    fi
+}
+
+# Prints git status
+# Arguments:
+#   $1 Directory path of the current git repository
+#   $2 Name of the command that lead here
+#   $3 Subcommand i.e. full or short
+#   $4.. ignored
+function git_status {
+    local -r repo_name="$(basename "${1}")"
+    if [ "${3}" == "full" ] ; then
+        local -r full_output=true
+    else
+        local -r full_output=false
+    fi
+
+    local -r status="$(git status 2>/dev/null | sed 's/# *//g')"
+    local -r branch="$(echo "${status}" \
+        | awk '/On branch/ { print $3 }')"
+    local -r modified="$(echo "${status}" \
+        | grep 'modified:')"
+    local -r renamed="$(echo "${status}" \
+        | grep 'renamed:')"
+    local -r deleted="$(echo "${status}" \
+        | grep 'deleted')"
+    local -r untracked="$(git ls-files --others --exclude-standard \
+        | awk '{print "\tuntracked:  "$0}')"
+    local -r uptodate="$(echo "${status}" \
+        | awk '/Your branch is up-to-date/ {print $4}')"
+
+    if [ "${full_output}" == true ]; then
+        local HEAD_LOG=`git log -n1 -q`
+        local COMMIT=`echo "${HEAD_LOG}" \
+            | awk '/commit/ {print "\tcommit: " $2}'`
+        local AUTHOR=`echo "${HEAD_LOG}" \
+            | awk '/Author/ {print "\t" $0}'`
+        local DATE=`echo "${HEAD_LOG}" \
+            | awk '/Date/ { print "\t" $0 }'`
+    fi
+
+    print_color "${repo_name}" "${c_green}"
+    if [[ ! -z "${uptodate}" ]]; then
+        echo -e "\tbranch:\t${branch}"
+    else
+        echo -e "\tbranch:\t${branch} ${c_red}IS NOT UP-TO-DATE${c_nocolor}"
+    fi
+
+    if [ "${full_output}" == true ]; then
+        print_color "${COMMIT}" "${c_nocolor}"
+        print_color "${AUTHOR}" "${c_nocolor}"
+        print_color "${DATE}" "${c_nocolor}"
+    fi
+
+    print_color "${modified}" "${c_nocolor}"
+    print_color "${deleted}" "${c_nocolor}"
+    print_color "${untracked}" "${c_nocolor}"
+    print_color "${renamed}" "${c_nocolor}"
+}
+
+# Performs git fetch and prints slightly cleaner output than usual
+# Arguments:
+#   $1 Directory path of the current git repository
+#   $2 Name of the command that lead here
+#   $3.. Additional parameters for passing to git fetch
+function git_fetch {
+    local -r repo_name="$(basename "${1}")"
+    local -r fetch="$(git fetch -p 2>&1)"
+    print_color "${repo_name}" "${c_green}"
+    print_color "${fetch}" "${c_nocolor}"
+}
+
+# Performs git fetch and prints slightly cleaner output than usual
+# Arguments:
+#   $1 Directory path of the current git repository
+#   $2 Name of the command that lead here
+function git_pull_r {
+    local -r repo_name="$(basename "${1}")"
+    local -r pull="$(git pull --rebase 2>&1)"
+    print_color "${repo_name}" "${c_green}"
+    print_color "${pull}" "${c_nocolor}"
+}
+
+# Performs git checkout and prints slightly cleaner output than usual
+# Arguments:
+#   $1 Directory path of the current git repository
+#   $2 Branch name to checkout
+function git_checkout {
+    local -r repo_name="$(basename "${1}")"
+    local -r checkout="$(git checkout ${2} 2>&1)"
+    print_color "${repo_name}" "${c_green}"
+    print_color "${checkout}" "${c_nocolor}"
+}
+
+# Parses command and executes it for each git
+# Arguments:
+#    All parameters passed to actual command functions
+function for_each_git {
+    local directory
+    find . -maxdepth 1 -type d -print0 | sort -z | while read -d '' -r directory ; do
+        cd "${directory}"
+        if [[ ! -d ".git" ]]; then
+            cd - > /dev/null
+            continue
+        fi
+
+        if [ "${1}" == "fetch" ]; then
+            git_fetch "${directory}" "${@}"
+        elif [ "${1}" == "checkout" ]; then
+            git_checkout "${directory}" "${2}"
+        elif [ "${1}" == "purr" ]; then
+            git_pull_r "${directory}" "${@}"
+        elif [ "${1}" == "status" ]; then
+            git_status "${directory}" "${1}" full "${@:1}"
+        else
+            git_status "${directory}" "${1}" short "${@:1}"
+        fi
+
+        cd - > /dev/null
+    done
+}
+
+# Parse command line parameters
+case ${1} in
+    -h|--help)
+        print_help
+        exit
+        ;;
+    -*)
+        echo "Unknown parameter!"
+        echo "Use -h to get help."
+        exit
+        ;;
+esac
+
+for_each_git $@
